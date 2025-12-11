@@ -1,8 +1,16 @@
 # Scrcpy AppImage (Unofficial)
 
+<div align="center">
+
 ![License](https://img.shields.io/github/license/Donjone/Scrcpy-AppImage)
 ![Version](https://img.shields.io/badge/scrcpy-v3.3.3-green)
 ![Platform](https://img.shields.io/badge/platform-Linux-blue)
+
+**[ English ]** | [ [中文说明] ](README_zh.md)
+
+</div>
+
+---
 
 An unofficial AppImage build for [Genymobile/scrcpy](https://github.com/Genymobile/scrcpy).
 
