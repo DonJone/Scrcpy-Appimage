@@ -18,47 +18,58 @@ jobs:
           sudo apt-get install -y \
             ffmpeg libsdl2-2.0-0 adb gcc git pkg-config meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
-            libsdl2-dev libusb-1.0-0-dev python3-pip
+            libsdl2-dev libusb-1.0-0-dev python3-pip wget
 
       - name: Clone Latest Scrcpy
         run: |
-          # 获取最新版本号
           SC_VERSION=$(curl -s https://api.github.com/repos/Genymobile/scrcpy/releases/latest | jq -r .tag_name)
           echo "Building version: $SC_VERSION"
           git clone --depth 1 --branch $SC_VERSION https://github.com/Genymobile/scrcpy.git
           echo "SC_VERSION=$SC_VERSION" >> $GITHUB_ENV
 
-      - name: Build Scrcpy Server & Client
+      - name: Build Scrcpy (Meson)
         run: |
           cd scrcpy
-          # 下载预编译的 Server (省去配置 Java 环境的麻烦)
+          # 下载预编译的 Server (必须步骤，否则需要配置复杂的 Java 环境)
           ./install_release.sh
+          # 修正：源码编译需要使用 meson，而不是运行 install_release.sh
+          # 配置构建目录
+          meson setup build --buildtype=release --strip -Db_lto=true
+          # 开始编译
+          ninja -C build
 
-      - name: Package AppImage
+      - name: Prepare AppDir
         run: |
-          # 这里我们需要一个工具把编译好的文件打包成 AppImage
-          # 使用 linuxdeploy 是目前最稳妥的方案
-          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage
-          
-          # 创建 AppDir 结构
           mkdir -p AppDir/usr/bin
-          cp scrcpy/build/app/scrcpy AppDir/usr/bin/
-          
-          # 这里需要 scrcpy 的图标和 desktop 文件，暂时用假数据生成，后续我们优化
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps/
-          touch AppDir/usr/share/icons/hicolor/256x256/apps/scrcpy.png
           
-          # 创建一个简单的 .desktop 文件
-          echo "[Desktop Entry]
+          # 复制编译好的二进制文件
+          cp scrcpy/build/scrcpy AppDir/usr/bin/
+          
+          # 复制 Server (很重要，没有它手机端没法运行)
+          mkdir -p AppDir/usr/share/scrcpy
+          cp scrcpy/scrcpy-server AppDir/usr/share/scrcpy/
+
+          # 创建图标（暂时用空文件占位，防止报错）
+          touch AppDir/usr/share/icons/hicolor/256x256/apps/scrcpy.png
+
+          # 使用 cat <<EOF 来安全地写入多行内容，解决之前的语法错误
+          cat > AppDir/scrcpy.desktop <<EOF
+          [Desktop Entry]
           Type=Application
           Name=Scrcpy
           Exec=scrcpy
           Icon=scrcpy
-          Categories=Development;" > AppDir/scrcpy.desktop
+          Categories=Development;
+          EOF
 
+      - name: Package AppImage
+        run: |
+          wget -O linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy
+          
           # 打包
-          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
+          ./linuxdeploy --appdir AppDir --output appimage
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
