@@ -1,0 +1,67 @@
+name: Build Scrcpy AppImage
+
+on:
+  workflow_dispatch: # 允许手动点击按钮触发
+  schedule:
+    - cron: '0 2 * * *' # 每天北京时间上午10点检查更新
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ffmpeg libsdl2-2.0-0 adb gcc git pkg-config meson ninja-build \
+            libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
+            libsdl2-dev libusb-1.0-0-dev python3-pip
+
+      - name: Clone Latest Scrcpy
+        run: |
+          # 获取最新版本号
+          SC_VERSION=$(curl -s https://api.github.com/repos/Genymobile/scrcpy/releases/latest | jq -r .tag_name)
+          echo "Building version: $SC_VERSION"
+          git clone --depth 1 --branch $SC_VERSION https://github.com/Genymobile/scrcpy.git
+          echo "SC_VERSION=$SC_VERSION" >> $GITHUB_ENV
+
+      - name: Build Scrcpy Server & Client
+        run: |
+          cd scrcpy
+          # 下载预编译的 Server (省去配置 Java 环境的麻烦)
+          ./install_release.sh
+
+      - name: Package AppImage
+        run: |
+          # 这里我们需要一个工具把编译好的文件打包成 AppImage
+          # 使用 linuxdeploy 是目前最稳妥的方案
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          
+          # 创建 AppDir 结构
+          mkdir -p AppDir/usr/bin
+          cp scrcpy/build/app/scrcpy AppDir/usr/bin/
+          
+          # 这里需要 scrcpy 的图标和 desktop 文件，暂时用假数据生成，后续我们优化
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps/
+          touch AppDir/usr/share/icons/hicolor/256x256/apps/scrcpy.png
+          
+          # 创建一个简单的 .desktop 文件
+          echo "[Desktop Entry]
+          Type=Application
+          Name=Scrcpy
+          Exec=scrcpy
+          Icon=scrcpy
+          Categories=Development;" > AppDir/scrcpy.desktop
+
+          # 打包
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scrcpy-AppImage
+          path: *.AppImage
