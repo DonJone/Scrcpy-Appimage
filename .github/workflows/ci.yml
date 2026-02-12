@@ -1,16 +1,16 @@
 name: Build Scrcpy AppImage
 
 on:
-  workflow_dispatch: # 允许手动点击按钮触发
+  workflow_dispatch:
   schedule:
-    - cron: '0 2 * * *' # 每天北京时间上午10点检查更新
+    - cron: '0 2 * * *'
 
 jobs:
   build:
     runs-on: ubuntu-20.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Dependencies
         run: |
@@ -18,52 +18,53 @@ jobs:
           sudo apt-get install -y \
             ffmpeg libsdl2-2.0-0 adb gcc git pkg-config meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
-            libsdl2-dev libusb-1.0-0-dev python3-pip wget
+            libsdl2-dev libusb-1.0-0-dev python3-pip wget jq
 
-      - name: Clone Latest Scrcpy
+      - name: Get Latest Scrcpy Version
+        id: get_version
         run: |
-          SC_VERSION=$(curl -s https://api.github.com/repos/Genymobile/scrcpy/releases/latest | jq -r .tag_name)
-          echo "Building version: $SC_VERSION"
-          git clone --depth 1 --branch $SC_VERSION https://github.com/Genymobile/scrcpy.git
-          echo "SC_VERSION=$SC_VERSION" >> $GITHUB_ENV
+          # 自动获取最新 Tag (例如 v3.1)
+          VERSION=$(curl -s https://api.github.com/repos/Genymobile/scrcpy/releases/latest | jq -r .tag_name)
+          echo "Target Version: $VERSION"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: Build Scrcpy (Meson)
+      - name: Clone and Prepare
+        run: |
+          git clone --depth 1 --branch ${{ env.VERSION }} https://github.com/Genymobile/scrcpy.git
+          
+          # 关键修正：源码中不包含 Server 文件，必须手动下载官方预编译的 Server
+          # 这样可以避免在 CI 中配置复杂的 Java/Android SDK 环境
+          SERVER_URL="https://github.com/Genymobile/scrcpy/releases/download/${{ env.VERSION }}/scrcpy-server-${{ env.VERSION }}"
+          echo "Downloading Server from: $SERVER_URL"
+          wget -O scrcpy-server "$SERVER_URL"
+
+      - name: Build Client
         run: |
           cd scrcpy
-          # 下载预编译的 Server (必须步骤，否则需要配置复杂的 Java 环境)
-          ./install_release.sh
-          # 修正：源码编译需要使用 meson，而不是运行 install_release.sh
-          # 配置构建目录
+          # 使用 Meson 编译客户端
           meson setup build --buildtype=release --strip -Db_lto=true
-          # 开始编译
           ninja -C build
 
-      - name: Prepare AppDir
+      - name: Create AppDir
         run: |
           mkdir -p AppDir/usr/bin
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps/
-          
-          # 复制编译好的二进制文件
-          cp scrcpy/build/scrcpy AppDir/usr/bin/
-          
-          # 复制 Server (很重要，没有它手机端没法运行)
           mkdir -p AppDir/usr/share/scrcpy
-          cp scrcpy/scrcpy-server AppDir/usr/share/scrcpy/
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          mkdir -p AppDir/usr/share/applications
 
-          # 创建图标（暂时用空文件占位，防止报错）
-          touch AppDir/usr/share/icons/hicolor/256x256/apps/scrcpy.png
+          # 1. 复制编译好的客户端
+          cp scrcpy/build/app/scrcpy AppDir/usr/bin/
 
-          # 使用 cat <<EOF 来安全地写入多行内容，解决之前的语法错误
-          cat > AppDir/scrcpy.desktop <<EOF
-          [Desktop Entry]
-          Type=Application
-          Name=Scrcpy
-          Exec=scrcpy
-          Icon=scrcpy
-          Categories=Development;
-          EOF
+          # 2. 复制下载的服务端
+          cp scrcpy-server AppDir/usr/share/scrcpy/scrcpy-server
 
-      - name: Package AppImage
+          # 3. 复制图标
+          cp scrcpy/app/data/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/scrcpy.png
+
+          # 4. 创建 Desktop 文件 (使用 printf 避免 YAML 缩进错误)
+          printf "[Desktop Entry]\nType=Application\nName=Scrcpy\nExec=scrcpy\nIcon=scrcpy\nCategories=Development;Utility;\nTerminal=false\n" > AppDir/usr/share/applications/scrcpy.desktop
+
+      - name: Package with LinuxDeploy
         run: |
           wget -O linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy
@@ -71,8 +72,11 @@ jobs:
           # 打包
           ./linuxdeploy --appdir AppDir --output appimage
 
+          # 重命名文件，带上版本号
+          mv Scrcpy-*.AppImage Scrcpy-${{ env.VERSION }}-x86_64.AppImage
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Scrcpy-AppImage
-          path: *.AppImage
+          path: "Scrcpy-*.AppImage" # 这里加上了引号，修复了之前的通配符报错
