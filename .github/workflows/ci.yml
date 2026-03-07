@@ -57,7 +57,7 @@ jobs:
         run: |
           cd scrcpy
           # 关键修正：必须启用 portable 模式！避免去系统 /usr/share 下寻找 server
-          meson setup build --buildtype=release --strip -Db_lto=true -Dportable=true
+          meson setup build --buildtype=release --strip -Db_lto=true -Dportable=true -Dcompile_server=false -Dprebuilt_server=../scrcpy-server
           ninja -C build
 
       - name: Create AppDir & Package
