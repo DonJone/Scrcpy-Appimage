@@ -2,15 +2,20 @@ name: Build and Release Scrcpy AppImage
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: '强制重新构建并覆盖发布 (Force Rebuild)'
+        type: boolean
+        default: true
   schedule:
-    - cron: '0 2 * * *' # 每天 UTC 时间 2:00 自动检查更新
+    - cron: '0 2 * * *'
 
 permissions:
-  contents: write # 必须开启此权限，允许 Action 自动创建 Release
+  contents: write
 
 jobs:
   check-and-build:
-    runs-on: ubuntu-22.04 # 使用 22.04 环境更现代
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,8 +30,10 @@ jobs:
       - name: Check if Release Exists
         id: check_release
         run: |
-          # 检查该版本的 Release 是否已经存在，避免每天重复打包
-          if gh release view ${{ env.VERSION }} > /dev/null 2>&1; then
+          if [ "${{ github.event.inputs.force }}" == "true" ]; then
+            echo "Force rebuild enabled. Skipping existence check."
+            echo "SKIP_BUILD=false" >> $GITHUB_ENV
+          elif gh release view ${{ env.VERSION }} > /dev/null 2>&1; then
             echo "Release ${{ env.VERSION }} already exists. Skipping build."
             echo "SKIP_BUILD=true" >> $GITHUB_ENV
           else
@@ -48,27 +55,28 @@ jobs:
         if: env.SKIP_BUILD == 'false'
         run: |
           git clone --depth 1 --branch ${{ env.VERSION }} https://github.com/Genymobile/scrcpy.git
+          
+          # 下载官方预编译 Server
           SERVER_URL="https://github.com/Genymobile/scrcpy/releases/download/${{ env.VERSION }}/scrcpy-server-${{ env.VERSION }}"
           echo "Downloading Server from: $SERVER_URL"
           wget -O scrcpy-server "$SERVER_URL"
 
-      - name: Build Client (Portable Mode)
+      - name: Build Client
         if: env.SKIP_BUILD == 'false'
         run: |
           cd scrcpy
-          # 关键修正：必须启用 portable 模式！避免去系统 /usr/share 下寻找 server
+          # 禁用便携模式，禁用 Server 编译，指向预下载的 Server
           meson setup build --buildtype=release --strip -Db_lto=true -Dcompile_server=false -Dprebuilt_server=../scrcpy-server
           ninja -C build
 
       - name: Create AppDir & Package
         if: env.SKIP_BUILD == 'false'
         run: |
-          # 按照 README 的理念，使用原生 appimagetool 保持轻量化
           mkdir -p Scrcpy.AppDir/usr/bin
           mkdir -p Scrcpy.AppDir/usr/share/applications
           mkdir -p Scrcpy.AppDir/usr/share/icons/hicolor/256x256/apps
 
-          # 1. 复制客户端和服务端 (Portable 模式要求两者在同一目录或规范层级内)
+          # 1. 复制客户端和服务端
           cp scrcpy/build/app/scrcpy Scrcpy.AppDir/usr/bin/
           cp scrcpy-server Scrcpy.AppDir/usr/bin/scrcpy-server
 
@@ -87,7 +95,7 @@ jobs:
           Terminal=false
           EOF
 
-          # 4. 创建 AppRun 引导脚本
+          # 4. 创建 AppRun 引导脚本 (注入 Server 路径环境变量)
           cat > Scrcpy.AppDir/AppRun << 'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "${0}")")"
@@ -101,7 +109,7 @@ jobs:
           wget -O appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           
-          # 注意：GitHub Actions 容器缺少 FUSE，需解压后运行避免报错
+          # 解压运行以规避 FUSE 报错
           ./appimagetool --appimage-extract
           export ARCH=x86_64
           ./squashfs-root/AppRun Scrcpy.AppDir Scrcpy-${{ env.VERSION }}-x86_64.AppImage
