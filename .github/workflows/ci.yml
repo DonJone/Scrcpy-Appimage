@@ -1,10 +1,10 @@
-name: Build and Release Scrcpy AppImage (FFmpeg 60)
+name: Build and Release Scrcpy All-in-One (FFmpeg 60 + ADB)
 
 on:
   workflow_dispatch:
     inputs:
       force:
-        description: '强制重新构建并覆盖发布 (Force Rebuild)'
+        description: '强制重新构建并覆盖发布'
         type: boolean
         default: true
   schedule:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   check-and-build:
-    runs-on: ubuntu-24.04 # 使用 24.04 以获取最新的 FFmpeg 6.x (.so.60)
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,17 +24,14 @@ jobs:
         id: get_version
         run: |
           VERSION=$(curl -s https://api.github.com/repos/Genymobile/scrcpy/releases/latest | jq -r .tag_name)
-          echo "Target Version: $VERSION"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Check if Release Exists
         id: check_release
         run: |
           if [ "${{ github.event.inputs.force }}" == "true" ]; then
-            echo "Force rebuild enabled. Skipping existence check."
             echo "SKIP_BUILD=false" >> $GITHUB_ENV
           elif gh release view ${{ env.VERSION }} > /dev/null 2>&1; then
-            echo "Release ${{ env.VERSION }} already exists. Skipping build."
             echo "SKIP_BUILD=true" >> $GITHUB_ENV
           else
             echo "SKIP_BUILD=false" >> $GITHUB_ENV
@@ -49,21 +46,23 @@ jobs:
           sudo apt-get install -y \
             ffmpeg libsdl2-2.0-0 adb gcc git pkg-config meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libavdevice-dev \
-            libsdl2-dev libusb-1.0-0-dev python3-pip wget jq
+            libsdl2-dev libusb-1.0-0-dev python3-pip wget jq unzip
 
       - name: Clone and Prepare
         if: env.SKIP_BUILD == 'false'
         run: |
           git clone --depth 1 --branch ${{ env.VERSION }} https://github.com/Genymobile/scrcpy.git
-          # 下载官方预编译 Server
-          SERVER_URL="https://github.com/Genymobile/scrcpy/releases/download/${{ env.VERSION }}/scrcpy-server-${{ env.VERSION }}"
-          wget -O scrcpy-server "$SERVER_URL"
+          wget -O scrcpy-server "https://github.com/Genymobile/scrcpy/releases/download/${{ env.VERSION }}/scrcpy-server-${{ env.VERSION }}"
+          
+          # --- 🚀 核心：下载最新官方 ADB ---
+          wget -O platform-tools.zip https://dl.google.com/android/repository/platform-tools-latest-linux.zip
+          unzip platform-tools.zip
+          # ------------------------------
 
       - name: Build Client
         if: env.SKIP_BUILD == 'false'
         run: |
           cd scrcpy
-          # 禁用便携模式，禁用 Server 编译，指向预下载的 Server
           meson setup build --buildtype=release --strip -Db_lto=true -Dcompile_server=false -Dprebuilt_server=../scrcpy-server
           ninja -C build
 
@@ -72,12 +71,16 @@ jobs:
         run: |
           mkdir -p Scrcpy.AppDir/usr/bin
           
-          # 1. 复制二进制文件
+          # 1. 复制 Scrcpy 组件
           cp scrcpy/build/app/scrcpy Scrcpy.AppDir/usr/bin/
           cp scrcpy-server Scrcpy.AppDir/usr/bin/scrcpy-server
           cp scrcpy/app/data/icon.png Scrcpy.AppDir/scrcpy.png
           
-          # 2. 创建桌面文件
+          # 2. 复制最新 ADB 到 bin 目录
+          cp platform-tools/adb Scrcpy.AppDir/usr/bin/adb
+          chmod +x Scrcpy.AppDir/usr/bin/adb
+          
+          # 3. 创建桌面文件
           cat > Scrcpy.AppDir/scrcpy.desktop << 'EOF'
           [Desktop Entry]
           Type=Application
@@ -88,22 +91,21 @@ jobs:
           Terminal=false
           EOF
 
-          # 3. 编写引导脚本 (注入 Server 路径并强制优先加载 AppImage 内部库)
+          # 4. 引导脚本：确保 AppImage 内部的 ADB 优先级最高
           cat > Scrcpy.AppDir/usr/bin/scrcpy.wrapper << 'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "${0}")")"
-          # 关键：$APPDIR 在运行时会被 AppImage 自动设置
+          # 让内部 bin 目录在 PATH 最前面，优先使用打包进去的 adb
+          export PATH="$APPDIR/usr/bin:$PATH"
           export SCRCPY_SERVER_PATH="$APPDIR/usr/bin/scrcpy-server"
           export LD_LIBRARY_PATH="$APPDIR/usr/lib/x86_64-linux-gnu:$APPDIR/usr/lib:$LD_LIBRARY_PATH"
           exec "$APPDIR/usr/bin/scrcpy" "$@"
           EOF
           chmod +x Scrcpy.AppDir/usr/bin/scrcpy.wrapper
 
-          # 4. 下载 linuxdeploy 并通过环境变量控制输出版本，防止 mv 冲突
+          # 5. 下载 linuxdeploy 并执行
           wget -O linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy
-          
-          # 设置 linuxdeploy 的环境变量
           export ARCH=x86_64
           export VERSION="${{ env.VERSION }}"
           
@@ -111,32 +113,22 @@ jobs:
           ./squashfs-root/AppRun \
             --appdir Scrcpy.AppDir \
             --executable Scrcpy.AppDir/usr/bin/scrcpy \
+            --executable Scrcpy.AppDir/usr/bin/adb \
             --desktop-file Scrcpy.AppDir/scrcpy.desktop \
             --icon-file Scrcpy.AppDir/scrcpy.png \
             --output appimage
-          
-          # 此时 linuxdeploy 已经自动生成了名为 Scrcpy-${{ env.VERSION }}-x86_64.AppImage 的文件
-
-      - name: Upload Artifact
-        if: env.SKIP_BUILD == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Scrcpy-AppImage-${{ env.VERSION }}
-          path: "Scrcpy-*.AppImage"
 
       - name: Create GitHub Release
         if: env.SKIP_BUILD == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
-          name: "Scrcpy AppImage ${{ env.VERSION }}"
+          name: "Scrcpy All-in-One ${{ env.VERSION }}"
           body: |
-            ### 🛠️ 构建说明 (Built on Ubuntu 24.04)
-            - **FFmpeg 版本**: 6.0+ (内置 `.so.60`)
-            - **主要修复**: 解决了在 Arch/CachyOS 等新系统上找不到 `.so.58` 的问题。
-            - **颜色显示**: 使用 `linuxdeploy` 排除底层驱动，确保在 Fedora 等系统上全彩显示。
-            
-            **注意**: 请确保宿主机已安装 `adb` 和 `SDL2`。
+            ### 📦 全能自包含版说明
+            - **内置 FFmpeg 6.0**: 兼容 Arch/CachyOS 等最新系统。
+            - **内置官方最新 ADB**: 即使系统没装 `adb` 也能直接运行。
+            - **SDL2 支持**: 自动处理依赖，并调用宿主机显卡驱动。
           files: "Scrcpy-*.AppImage"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
