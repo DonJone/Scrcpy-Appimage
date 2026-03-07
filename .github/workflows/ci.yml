@@ -1,10 +1,10 @@
-name: Build and Release Scrcpy AppImage
+name: Build and Release Scrcpy AppImage (Modern v60)
 
 on:
   workflow_dispatch:
     inputs:
       force:
-        description: '强制重新构建并覆盖发布 (Force Rebuild)'
+        description: '强制重新构建 (Force Rebuild)'
         type: boolean
         default: true
   schedule:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   check-and-build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04 # 关键：切换到 24.04 环境以获取 FFmpeg 6.0 (.so.60)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,17 +24,14 @@ jobs:
         id: get_version
         run: |
           VERSION=$(curl -s https://api.github.com/repos/Genymobile/scrcpy/releases/latest | jq -r .tag_name)
-          echo "Target Version: $VERSION"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Check if Release Exists
         id: check_release
         run: |
           if [ "${{ github.event.inputs.force }}" == "true" ]; then
-            echo "Force rebuild enabled. Skipping existence check."
             echo "SKIP_BUILD=false" >> $GITHUB_ENV
           elif gh release view ${{ env.VERSION }} > /dev/null 2>&1; then
-            echo "Release ${{ env.VERSION }} already exists. Skipping build."
             echo "SKIP_BUILD=true" >> $GITHUB_ENV
           else
             echo "SKIP_BUILD=false" >> $GITHUB_ENV
@@ -42,7 +39,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Dependencies
+      - name: Install & Detect Latest Libraries
         if: env.SKIP_BUILD == 'false'
         run: |
           sudo apt-get update
@@ -50,84 +47,80 @@ jobs:
             ffmpeg libsdl2-2.0-0 adb gcc git pkg-config meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libavdevice-dev \
             libsdl2-dev libusb-1.0-0-dev python3-pip wget jq
+          
+          echo "--- 📋 当前构建环境库版本检测 ---"
+          ffmpeg -version | head -n 1
+          pkg-config --modversion sdl2 | sed 's/^/SDL2 版本: /'
+          pkg-config --modversion libavformat | sed 's/^/libavformat 版本: /'
+          echo "------------------------------"
 
       - name: Clone and Prepare
         if: env.SKIP_BUILD == 'false'
         run: |
           git clone --depth 1 --branch ${{ env.VERSION }} https://github.com/Genymobile/scrcpy.git
-          
-          # 下载官方预编译 Server
-          SERVER_URL="https://github.com/Genymobile/scrcpy/releases/download/${{ env.VERSION }}/scrcpy-server-${{ env.VERSION }}"
-          echo "Downloading Server from: $SERVER_URL"
-          wget -O scrcpy-server "$SERVER_URL"
+          wget -O scrcpy-server "https://github.com/Genymobile/scrcpy/releases/download/${{ env.VERSION }}/scrcpy-server-${{ env.VERSION }}"
 
       - name: Build Client
         if: env.SKIP_BUILD == 'false'
         run: |
           cd scrcpy
-          # 禁用便携模式，禁用 Server 编译，指向预下载的 Server
           meson setup build --buildtype=release --strip -Db_lto=true -Dcompile_server=false -Dprebuilt_server=../scrcpy-server
           ninja -C build
 
-      - name: Create AppDir & Package
+      - name: Create AppDir & Pack with Modern Libs
         if: env.SKIP_BUILD == 'false'
         run: |
           mkdir -p Scrcpy.AppDir/usr/bin
-          mkdir -p Scrcpy.AppDir/usr/share/applications
-          mkdir -p Scrcpy.AppDir/usr/share/icons/hicolor/256x256/apps
-
-          # 1. 复制客户端和服务端
           cp scrcpy/build/app/scrcpy Scrcpy.AppDir/usr/bin/
           cp scrcpy-server Scrcpy.AppDir/usr/bin/scrcpy-server
-
-          # 2. 复制图标
           cp scrcpy/app/data/icon.png Scrcpy.AppDir/scrcpy.png
-          cp scrcpy/app/data/icon.png Scrcpy.AppDir/usr/share/icons/hicolor/256x256/apps/scrcpy.png
-
-          # 3. 创建 Desktop 文件
+          
           cat > Scrcpy.AppDir/scrcpy.desktop << 'EOF'
           [Desktop Entry]
           Type=Application
           Name=Scrcpy
-          Exec=scrcpy
+          Exec=scrcpy.wrapper
           Icon=scrcpy
           Categories=Development;Utility;
           Terminal=false
           EOF
 
-          # 4. 创建 AppRun 引导脚本 (注入 Server 路径环境变量)
-          cat > Scrcpy.AppDir/AppRun << 'EOF'
+          cat > Scrcpy.AppDir/usr/bin/scrcpy.wrapper << 'EOF'
           #!/bin/sh
-          HERE="$(dirname "$(readlink -f "${0}")")"
-          export PATH="${HERE}/usr/bin:${PATH}"
-          export SCRCPY_SERVER_PATH="${HERE}/usr/bin/scrcpy-server"
-          exec scrcpy "$@"
+          export SCRCPY_SERVER_PATH="$APPDIR/usr/bin/scrcpy-server"
+          # 强制使用 AppImage 内部打包的库，避免引用宿主机的旧库
+          export LD_LIBRARY_PATH="$APPDIR/usr/lib:$LD_LIBRARY_PATH"
+          exec "$APPDIR/usr/bin/scrcpy" "$@"
           EOF
-          chmod +x Scrcpy.AppDir/AppRun
+          chmod +x Scrcpy.AppDir/usr/bin/scrcpy.wrapper
 
-          # 5. 下载 appimagetool 并打包
-          wget -O appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool
+          # 使用 linuxdeploy 精准打包 .so.60 相关库
+          wget -O linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy
+          ./linuxdeploy --appimage-extract
           
-          # 解压运行以规避 FUSE 报错
-          ./appimagetool --appimage-extract
           export ARCH=x86_64
-          ./squashfs-root/AppRun Scrcpy.AppDir Scrcpy-${{ env.VERSION }}-x86_64.AppImage
+          # 这一步会把 Ubuntu 24.04 的最新 .so 库全部“吸”进 AppDir
+          ./squashfs-root/AppRun \
+            --appdir Scrcpy.AppDir \
+            --executable Scrcpy.AppDir/usr/bin/scrcpy \
+            --desktop-file Scrcpy.AppDir/scrcpy.desktop \
+            --icon-file Scrcpy.AppDir/scrcpy.png \
+            --output appimage
 
-      - name: Upload Artifact
-        if: env.SKIP_BUILD == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Scrcpy-AppImage-${{ env.VERSION }}
-          path: "Scrcpy-*.AppImage"
+          mv Scrcpy-*.AppImage Scrcpy-${{ env.VERSION }}-x86_64.AppImage
 
       - name: Create GitHub Release
         if: env.SKIP_BUILD == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
-          name: "Scrcpy AppImage ${{ env.VERSION }}"
-          body: "Automated lightweight AppImage build for Scrcpy ${{ env.VERSION }}. \n\n**Note**: Please ensure `ffmpeg`, `SDL2`, and `adb` are installed on your host system."
+          name: "Scrcpy AppImage ${{ env.VERSION }} (FFmpeg 6.x)"
+          body: |
+            ### 🚀 现代化构建版
+            - **库环境**: 基于 Ubuntu 24.04 编译，内置 **FFmpeg 6.0+ (.so.60)**。
+            - **兼容性**: 完美适配 Arch Linux / CachyOS 等滚动发行版。
+            - **自包含**: 已打包核心逻辑库，无需手动安装兼容包。
           files: "Scrcpy-*.AppImage"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
