@@ -1,4 +1,4 @@
-name: Build and Release Scrcpy All-in-One (FFmpeg 60 + ADB)
+name: Build and Release Scrcpy All-in-One
 
 on:
   workflow_dispatch:
@@ -42,7 +42,13 @@ jobs:
       - name: Install Dependencies
         if: env.SKIP_BUILD == 'false'
         run: |
+          # 1. 引入第三方 PPA 仓库 (提供最新的 FFmpeg)
+          sudo add-apt-repository -y ppa:ubuntuhandbook1/ffmpeg7
+          
+          # 2. 更新软件源
           sudo apt-get update
+          
+          # 3. 安装依赖项
           sudo apt-get install -y \
             ffmpeg libsdl2-2.0-0 adb gcc git pkg-config meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libavdevice-dev \
@@ -54,10 +60,20 @@ jobs:
           git clone --depth 1 --branch ${{ env.VERSION }} https://github.com/Genymobile/scrcpy.git
           wget -O scrcpy-server "https://github.com/Genymobile/scrcpy/releases/download/${{ env.VERSION }}/scrcpy-server-${{ env.VERSION }}"
           
-          # --- 🚀 核心：下载最新官方 ADB ---
+          # --- 下载最新官方 ADB ---
           wget -O platform-tools.zip https://dl.google.com/android/repository/platform-tools-latest-linux.zip
           unzip platform-tools.zip
-          # ------------------------------
+
+      - name: Extract Component Versions
+        if: env.SKIP_BUILD == 'false'
+        run: |
+          # 动态获取 FFmpeg 和 ADB 的精确版本号，并写入 GitHub 环境变量
+          FFMPEG_VER=$(ffmpeg -version | head -n1 | awk '{print $3}')
+          ADB_VER=$(platform-tools/adb version | awk '/^Version/ {print $2}')
+          
+          echo "FFMPEG_VER=$FFMPEG_VER" >> $GITHUB_ENV
+          echo "ADB_VER=$ADB_VER" >> $GITHUB_ENV
+          echo "抓取到的版本: FFmpeg=$FFMPEG_VER, ADB=$ADB_VER"
 
       - name: Build Client
         if: env.SKIP_BUILD == 'false'
@@ -95,7 +111,6 @@ jobs:
           cat > Scrcpy.AppDir/usr/bin/scrcpy.wrapper << 'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "${0}")")"
-          # 让内部 bin 目录在 PATH 最前面，优先使用打包进去的 adb
           export PATH="$APPDIR/usr/bin:$PATH"
           export SCRCPY_SERVER_PATH="$APPDIR/usr/bin/scrcpy-server"
           export LD_LIBRARY_PATH="$APPDIR/usr/lib/x86_64-linux-gnu:$APPDIR/usr/lib:$LD_LIBRARY_PATH"
@@ -123,12 +138,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
-          name: "Scrcpy All-in-One ${{ env.VERSION }}"
+          name: "Scrcpy AppImage ${{ env.VERSION }}"
           body: |
-            ### 📦 全能自包含版说明
-            - **内置 FFmpeg 6.0**: 兼容 Arch/CachyOS 等最新系统。
-            - **内置官方最新 ADB**: 即使系统没装 `adb` 也能直接运行。
-            - **SDL2 支持**: 自动处理依赖，并调用宿主机显卡驱动。
+            ### Release Notes
+            - **FFmpeg**: ${{ env.FFMPEG_VER }}
+            - **Standalone ADB**: ${{ env.ADB_VER }}
           files: "Scrcpy-*.AppImage"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
