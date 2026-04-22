@@ -1,3 +1,4 @@
+
 # Scrcpy AppImage (Unofficial)
 
 <div align="center">
@@ -12,106 +13,111 @@
 
 ---
 
-An unofficial AppImage build for [Genymobile/scrcpy](https://github.com/Genymobile/scrcpy).
+An unofficial AppImage distribution of [Genymobile/scrcpy](https://github.com/Genymobile/scrcpy).
 
-## 🧐 Why this repository?
+## Project Rationale
 
-This repository was created to address a specific issue where installing `scrcpy` via system package managers (e.g., `dnf` on Fedora/RHEL) resulted in a **grayscale/black-and-white display**.
+This repository provides an alternative installation method for systems where native package managers (e.g., `dnf` on Fedora/RHEL) deliver problematic builds, such as those resulting in a grayscale or black-and-white rendering issue.
 
-This AppImage packages the official pre-built binaries (v3.3.3) into a portable format. By bypassing the specific repository versions that cause the rendering glitch, this build ensures a **proper full-color display** on affected systems.
-
----
-
-## ⚠️ Important Note on Dependencies
-
-**This is a "Lightweight" AppImage.** Unlike standard AppImages that bundle every single library, this package wraps the pre-compiled binaries. It relies on your system having the basic runtime libraries installed.
-
-To ensure it runs, you likely need the following installed on your system:
-* `android-tools` (ADB)
-* `SDL2`
-* `ffmpeg` (libavcodec/libavformat)
-
-If the AppImage fails to launch, please install the standard scrcpy dependencies via your package manager first (e.g., `sudo dnf install android-tools SDL2 ffmpeg`).
+By packaging the official pre-built binaries into a portable AppImage format, this build isolates the application from host system dependency conflicts, ensuring correct color rendering and stable performance across various Linux distributions.
 
 ---
 
-## 🚀 Installation & Usage
+## Architecture & Features
 
-### Option 1: Manage with Gear Lever (Recommended)
+Unlike standard lightweight wrappers, this release is built as a **standalone, all-in-one package**. It is designed to run independently of the host system's media and debugging libraries.
 
-This AppImage is fully compatible with [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever), a popular AppImage manager for Linux. This allows you to easily integrate it into your app menu and manage updates.
-
-1.  **Download** the `.AppImage` file from the [Releases](../../releases) page.
-2.  Open **Gear Lever**.
-3.  Click **"Open File"** and select the `Scrcpy-x86_64.AppImage`.
-4.  Gear Lever will automatically move it to your AppImages folder and create a desktop entry.
-5.  Launch `scrcpy` directly from your system's application launcher.
-
-### Option 2: Manual Run
-
-1.  **Download** the latest `.AppImage` file.
-2.  **Make it executable**:
-    ```bash
-    chmod +x Scrcpy-x86_64.AppImage
-    ```
-3.  **Run it**:
-    ```bash
-    ./Scrcpy-x86_64.AppImage
-    ```
-
-*(Note: Ensure USB debugging is enabled on your Android device.)*
+* **Integrated FFmpeg (7.x)**: Bundles modern FFmpeg libraries to ensure stable video rendering and compatibility with rolling-release distributions (e.g., Arch Linux, CachyOS).
+* **Standalone ADB**: Includes the latest official Android Platform Tools. Host installation of `android-tools` is not required.
+* **Hardware Acceleration**: Automatically maps and utilizes the host's native graphics drivers via SDL2.
 
 ---
+## Installation & Usage
 
-## 🛠 How to Build
+**💡 Zero-Dependency Note:** Because this is an All-in-One build, you do **not** need to install `adb`, `ffmpeg`, or `SDL2` on your host system. All core components are bundled inside.
 
-If you want to reproduce this build yourself using the official binaries:
+### Option 1: AppImage Managers (Recommended)
+
+This AppImage is fully compatible with application managers such as [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever), which facilitate desktop integration and update management.
+
+1. Download the `.AppImage` file from the [Releases](../../releases) page.
+2. Import the file into Gear Lever or your preferred manager.
+3. Launch `scrcpy` directly from your system's application launcher.
+
+### Option 2: Command Line Execution
+
+1. Download the latest `.AppImage` release.
+2. Grant execution permissions:
+   ```bash
+   chmod +x Scrcpy-x86_64.AppImage
+   ```
+3. Execute the binary:
+   ```bash
+   ./Scrcpy-x86_64.AppImage
+   ```
+
+**🔧 Troubleshooting (AppImage Runtime):**
+If you encounter a `dlopen(): error loading libfuse.so.2` error on modern distributions (like Ubuntu 22.04+), your system is missing FUSE 2, which is required to mount Type 2 AppImages.
+* **Ubuntu/Debian:** Run
+ ```
+ sudo apt install libfuse2
+ ```
+* **Arch Linux:** Run 
+```
+sudo pacman -S fuse2
+```
+* **Fedora:** Run 
+```
+sudo dnf install fuse
+```
+*(Note: Target Android devices must have USB debugging enabled.)*
+
+
+## Manual Build Process
+
+To reproduce this build locally, refer to the automated workflow defined in `.github/workflows/ci.yml`. If you prefer to package the basic binaries manually using standard tools:
 
 ### Prerequisites
 * `wget`
-* `appimagetool` (downloaded during the process)
+* `appimagetool`
 
-### Build Steps
+### Procedure
 
-1.  **Prepare the Directory**:
-    ```bash
-    mkdir Scrcpy.AppDir
-    # Copy your scrcpy binaries (adb, scrcpy, scrcpy-server, etc.) into Scrcpy.AppDir/
-    ```
+1. **Initialize AppDir**:
+   ```bash
+   mkdir Scrcpy.AppDir
+   # Copy required binaries (adb, scrcpy, scrcpy-server) into Scrcpy.AppDir/
+   ```
 
-2.  **Create Metadata**:
-    Inside `Scrcpy.AppDir`, create a `scrcpy.desktop` file:
-    ```ini
-    [Desktop Entry]
-    Name=scrcpy
-    Type=Application
-    Categories=Development;
-    Terminal=false
-    Exec=scrcpy
-    Icon=icon
-    Comment=Display and control your Android device
-    ```
+2. **Configure Desktop Entry** (`Scrcpy.AppDir/scrcpy.desktop`):
+   ```ini
+   [Desktop Entry]
+   Name=scrcpy
+   Type=Application
+   Categories=Development;Utility;
+   Terminal=false
+   Exec=scrcpy
+   Icon=icon
+   Comment=Display and control your Android device
+   ```
 
-3.  **Create Entry Point**:
-    ```bash
-    cd Scrcpy.AppDir
-    ln -s scrcpy AppRun
-    cd ..
-    ```
+3. **Define Entry Point**:
+   ```bash
+   cd Scrcpy.AppDir
+   ln -s scrcpy AppRun
+   cd ..
+   ```
 
-4.  **Package**:
-    ```bash
-    # Download tool
-    wget [https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage](https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage)
-    chmod +x appimagetool-x86_64.AppImage
-
-    # Build
-    ./appimagetool-x86_64.AppImage Scrcpy.AppDir
-    ```
+4. **Compile AppImage**:
+   ```bash
+   wget [https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage](https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage)
+   chmod +x appimagetool-x86_64.AppImage
+   ./appimagetool-x86_64.AppImage Scrcpy.AppDir
+   ```
 
 ---
 
-## ⚖️ License
+## License
 
-* **Scrcpy** is developed by [Genymobile](https://github.com/Genymobile) and is licensed under Apache 2.0.
-* This repository only provides the packaging scripts/builds to facilitate usage on Linux distributions.
+* **Scrcpy** is developed by [Genymobile](https://github.com/Genymobile) and is licensed under the Apache 2.0 License.
+* This repository provides packaging scripts and build configurations to facilitate deployment on Linux environments.
