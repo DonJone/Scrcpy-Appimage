@@ -48,23 +48,30 @@ jobs:
           # 2. 更新软件源
           sudo apt-get update
 
-          # 3. 安装依赖项 (SDL3 使用预编译 deb 安装)
+          # 3. 安装依赖项 (SDL3 编译构建所需)
           sudo apt-get install -y \
             ffmpeg adb gcc git pkg-config meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libavdevice-dev \
             libusb-1.0-0-dev libasound2-dev libpulse-dev libwayland-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev \
-            libxkbcommon-dev libgl1-mesa-dev libv4l-dev python3-pip wget jq unzip
+            libxkbcommon-dev libgl1-mesa-dev libxss-dev libxt-dev libxtst-dev libxv-dev \
+            libxxf86vm-dev libdrm-dev libgbm-dev libdbus-1-dev libdecor-0-dev \
+            libudev-dev libfribidi-dev libibus-1.0-dev libv4l-dev python3-pip wget jq unzip
 
-      - name: Install SDL3 (from prebuilt deb)
+      - name: Build and Install SDL3
         if: env.SKIP_BUILD == 'false'
         run: |
-          SDL_VER="3.4.2+ds-1ubuntu1"
-          BASE="http://archive.ubuntu.com/ubuntu/pool/universe/libs/libsdl3"
-          wget "$BASE/libsdl3-0_${SDL_VER}_amd64.deb"
-          wget "$BASE/libsdl3-dev_${SDL_VER}_amd64.deb"
-          sudo dpkg -i libsdl3-0_*.deb libsdl3-dev_*.deb || true
-          sudo apt-get install -f -y
+          git clone --depth 1 --branch release-3.4.8 https://github.com/libsdl-org/SDL.git
+          cd SDL
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_TEST=OFF \
+            -DSDL_STATIC=OFF \
+            -DCMAKE_INSTALL_PREFIX=/usr
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
 
       - name: Clone and Prepare
         if: env.SKIP_BUILD == 'false'
