@@ -45,12 +45,13 @@ jobs:
           # 1. 引入第三方 PPA 仓库 (提供最新的 FFmpeg)
           sudo add-apt-repository -y ppa:ubuntuhandbook1/ffmpeg7
 
-          # 2. 更新软件源
+          # 2. 更新软件源并升级系统已装包 (确保 PPA 提供的 FFmpeg 覆盖系统预装旧版)
           sudo apt-get update
+          sudo apt-get upgrade -y
 
           # 3. 安装依赖项 (SDL3 编译构建所需)
           sudo apt-get install -y \
-            ffmpeg adb gcc git pkg-config meson ninja-build \
+            ffmpeg gcc git pkg-config meson ninja-build \
             libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libavdevice-dev \
             libusb-1.0-0-dev libasound2-dev libpulse-dev libwayland-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev \
