@@ -109,7 +109,7 @@ jobs:
           # 1. 复制 Scrcpy 组件
           cp scrcpy/build/app/scrcpy Scrcpy.AppDir/usr/bin/
           cp scrcpy-server Scrcpy.AppDir/usr/bin/scrcpy-server
-          cp scrcpy/app/data/icon.png Scrcpy.AppDir/scrcpy.png
+          cp scrcpy/app/data/scrcpy.png Scrcpy.AppDir/scrcpy.png
           
           # 2. 复制最新 ADB 到 bin 目录
           cp platform-tools/adb Scrcpy.AppDir/usr/bin/adb
